@@ -43,6 +43,11 @@ function LinkifyText({ text }: { text: string }) {
 }
 
 export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken, isReadOnly = false, onLogout, onSwitchView }: CalendarAppProps) {
+  const truncateId = (id: string | undefined, maxLength: number) => {
+    if (!id) return '';
+    if (id.length <= maxLength) return id;
+    return id.substring(0, maxLength) + '...';
+  };
   const [currentMonth, setCurrentMonth] = useState(dayjs().startOf('month'));
   const [selectedDate, setSelectedDate] = useState(dayjs().format('YYYY-MM-DD'));
   const [events, setEvents] = useState<Record<string, EventData>>({});
@@ -321,7 +326,7 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
     <div className="flex flex-col h-screen bg-gray-50 text-gray-900 font-sans overflow-hidden">
       {/* ===== Global Header ===== */}
       <header 
-        className={cn("h-14 flex items-center justify-between px-4 shadow-sm z-20 shrink-0", headerTextColorClass)}
+        className={cn("h-14 flex items-center justify-between px-2 sm:px-4 shadow-sm z-20 shrink-0", headerTextColorClass)}
         style={{ backgroundColor: themeColor }}
       >
         <div className="flex items-center gap-2">
@@ -338,7 +343,7 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
             <div className="relative flex items-center">
               <select
                 className={cn(
-                  "appearance-none transition-colors rounded-lg py-1.5 pl-3 pr-8 font-bold text-lg outline-none cursor-pointer border border-transparent",
+                  "appearance-none transition-colors rounded-lg py-1.5 pl-3 pr-8 font-bold text-lg outline-none cursor-pointer border border-transparent truncate max-w-[130px] sm:max-w-[250px]",
                   headerTextColorClass,
                   headerTextColorClass === 'text-white' 
                     ? "bg-white/10 hover:bg-white/20 focus:border-white/30" 
@@ -356,18 +361,19 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
                   }
                 }}
               >
-                <option value="mine" className="text-gray-900 bg-white">しいたけカレンダー ({loggedInCalendarId})</option>
+                <option value="mine" className="text-gray-900 bg-white">{truncateId(loggedInCalendarId, 12)}</option>
                 {savedCalendars.map(c => (
                   <option key={c.view_token} value={c.calendar_id} className="text-gray-900 bg-white">
-                    {c.calendar_id} さんのカレンダー
+                    {truncateId(c.calendar_id, 12)}
                   </option>
                 ))}
               </select>
               <ChevronDown className="absolute right-2 pointer-events-none opacity-70" size={18} />
             </div>
           ) : (
-            <h1 className="font-bold text-lg">
-              しいたけカレンダー {actualCalendarId ? `(${actualCalendarId})` : ''} {isReadOnly && <span className="ml-2 text-xs font-normal opacity-80">(閲覧専用)</span>}
+            <h1 className="font-bold text-lg truncate max-w-[150px] sm:max-w-[300px] md:max-w-none">
+              <span className="hidden md:inline">しいたけカレンダー</span>
+              <span className="inline md:hidden">カレンダー</span> {actualCalendarId ? truncateId(actualCalendarId, 10) : ''} {isReadOnly && <span className="ml-2 text-xs font-normal opacity-80">(閲覧)</span>}
             </h1>
           )}
         </div>
