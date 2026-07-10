@@ -68,6 +68,7 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
   // Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<TabType>('calendar');
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -205,6 +206,7 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
 
   const handleDateSelect = (dateStr: string) => {
     setSelectedDate(dateStr);
+    setIsDetailOpen(true);
   };
 
   const handlePrevDay = () => {
@@ -409,17 +411,44 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
       </header>
 
       {/* ===== Main Content Area ===== */}
-      <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden relative">
         {/* ===== Left: Calendar Area ===== */}
-        <div className="flex-1 md:flex-[2] flex flex-col bg-white border-b md:border-b-0 md:border-r border-gray-200 overflow-hidden">
+        <div className={cn(
+          "md:flex-[2] flex-col bg-white border-b md:border-b-0 md:border-r border-gray-200 overflow-hidden",
+          isDetailOpen ? "flex-[1] flex" : "flex-1 flex"
+        )}>
         
         {/* Calendar Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-100">
-          <button onClick={handlePrevMonth} className="p-2 hover:bg-gray-100 rounded-full">
+        <div className="flex items-center justify-between p-4 border-b border-gray-100 shrink-0">
+          <button onClick={handlePrevMonth} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
             <ChevronLeft size={20} />
           </button>
-          <h2 className="text-xl font-bold">{currentMonth.format('YYYY年 M月')}</h2>
-          <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-full">
+          
+          <div className="relative flex items-center justify-center group px-4 py-1 rounded-md hover:bg-gray-100 transition-colors cursor-pointer">
+            <h2 className="text-xl font-bold flex items-center gap-1">
+              {currentMonth.format('YYYY年 M月')}
+              <ChevronDown size={16} className="text-gray-400 group-hover:text-gray-600" />
+            </h2>
+            <input
+              type="month"
+              className="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer"
+              value={currentMonth.format('YYYY-MM')}
+              onClick={(e) => {
+                try {
+                  if ('showPicker' in e.currentTarget) {
+                    (e.currentTarget as HTMLInputElement).showPicker();
+                  }
+                } catch (err) {}
+              }}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setCurrentMonth(dayjs(e.target.value).startOf('month'));
+                }
+              }}
+            />
+          </div>
+
+          <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
             <ChevronRight size={20} />
           </button>
         </div>
@@ -490,21 +519,33 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
       </div>
 
       {/* ===== Right: Detail Panel ===== */}
-      <div className="flex-1 md:flex-[1] flex flex-col bg-white overflow-hidden">
+      <div className={cn(
+        "md:flex-[1] flex-col bg-white overflow-hidden shadow-[0_-4px_15px_rgba(0,0,0,0.05)] md:shadow-none z-10 md:z-auto border-t border-gray-200 md:border-t-0",
+        isDetailOpen ? "flex flex-[1.2] md:flex" : "hidden md:flex"
+      )}>
         
         {/* Detail Header / Nav */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gray-50">
-          <button onClick={handlePrevDay} className="flex items-center px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 rounded-md transition-colors">
-            <ChevronLeft size={16} className="mr-1" />前日
-          </button>
-          <div className="text-lg font-bold">
+        <div className="flex items-center justify-between p-3 sm:p-4 border-b border-gray-200 bg-gray-50 shrink-0">
+          <div className="flex items-center">
+            <button onClick={() => setIsDetailOpen(false)} className="md:hidden mr-1 p-1.5 text-gray-500 hover:bg-gray-200 rounded-full transition-colors" title="閉じる">
+              <ChevronDown size={20} />
+            </button>
+            <button onClick={handlePrevDay} className="flex items-center px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-600 hover:bg-gray-200 rounded-md transition-colors">
+              <ChevronLeft size={16} className="mr-1 hidden sm:block" />
+              <span className="sm:hidden">&lt; 前日</span>
+              <span className="hidden sm:inline">前日</span>
+            </button>
+          </div>
+          <div className="text-base sm:text-lg font-bold flex items-center justify-center">
             {dayjs(selectedDate).format('YYYY/MM/DD')}
-            <span className="ml-2 text-sm font-normal text-gray-500">
+            <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-normal text-gray-500">
               ({['日', '月', '火', '水', '木', '金', '土'][dayjs(selectedDate).day()]})
             </span>
           </div>
-          <button onClick={handleNextDay} className="flex items-center px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 rounded-md transition-colors">
-            翌日<ChevronRight size={16} className="ml-1" />
+          <button onClick={handleNextDay} className="flex items-center px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-600 hover:bg-gray-200 rounded-md transition-colors">
+            <span className="sm:hidden">翌日 &gt;</span>
+            <span className="hidden sm:inline">翌日</span>
+            <ChevronRight size={16} className="ml-1 hidden sm:block" />
           </button>
         </div>
 
