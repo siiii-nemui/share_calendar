@@ -2,11 +2,12 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
-import { ChevronLeft, ChevronRight, Settings, Share2, Loader2, LogOut, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Settings, Share2, Loader2, LogOut, ChevronDown, ChevronUp, X, HelpCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getContrastYIQ } from '@/lib/colorUtils';
 import { getHolidayName, getHolidaysForYears } from '@/lib/holidays';
 import SettingsModal, { TabType } from './SettingsModal';
+import HelpModal from './HelpModal';
 import { supabase } from '@/lib/supabase';
 
 // 長押しで複数選択モードに入るまでの時間 (ms)
@@ -91,6 +92,7 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<TabType>('calendar');
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -553,16 +555,23 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsHelpOpen(true)}
+            className={cn("p-2 rounded-full hover:bg-black/10 transition-colors", headerTextColorClass)}
+            title="使い方・機能ガイド"
+          >
+            <HelpCircle size={20} />
+          </button>
           {!isReadOnly && (
             <>
-              <button 
+              <button
                 onClick={handleShare}
                 className={cn("p-2 rounded-full hover:bg-black/10 transition-colors flex items-center gap-1", headerTextColorClass)}
                 title="閲覧用URLをコピー"
               >
                 <Share2 size={18} />
               </button>
-              <button 
+              <button
                 onClick={() => openSettings('calendar')}
                 className={cn("p-2 rounded-full hover:bg-black/10 transition-colors", headerTextColorClass)}
                 title="設定"
@@ -967,6 +976,9 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
           }}
         />
       )}
+
+      {/* ===== Help Modal ===== */}
+      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} isReadOnly={isReadOnly} />
 
     </div>
   );
