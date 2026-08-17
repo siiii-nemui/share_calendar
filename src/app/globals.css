@@ -24,3 +24,14 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* iOS Safariはフォーカスした input/textarea/select の font-size が16px未満だと
+   ページを自動的に拡大し、フォーカスが外れても縮小されずそのまま残ってしまう。
+   モバイル幅では最低16pxを強制してこの自動ズームを防ぐ。 */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
