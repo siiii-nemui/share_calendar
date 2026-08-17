@@ -2,11 +2,19 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
-import { ChevronLeft, ChevronRight, Settings, Share2, Loader2, LogOut, ChevronDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Settings, Share2, Loader2, LogOut, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getContrastYIQ } from '@/lib/colorUtils';
+import { getHolidayName, getHolidaysForYears } from '@/lib/holidays';
 import SettingsModal, { TabType } from './SettingsModal';
 import { supabase } from '@/lib/supabase';
+
+// 長押しで複数選択モードに入るまでの時間 (ms)
+const LONG_PRESS_MS = 500;
+// スワイプとみなす最小移動距離 (px)
+const SWIPE_THRESHOLD_PX = 60;
+// 長押しをキャンセルする移動距離 (px)
+const MOVE_CANCEL_PX = 10;
 
 // --- Types ---
 type EventData = { content: string; bg_color: string };
@@ -51,7 +59,21 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
   const [currentMonth, setCurrentMonth] = useState(dayjs().startOf('month'));
   const [selectedDate, setSelectedDate] = useState(dayjs().format('YYYY-MM-DD'));
   const [events, setEvents] = useState<Record<string, EventData>>({});
-  
+  const today = dayjs().format('YYYY-MM-DD');
+
+  // Multi-select State (長押しで開始し、タップで追加/解除する複数選択モード)
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressFiredRef = useRef(false);
+  const movedRef = useRef(false);
+
+  // Monthly Memo State
+  const [monthlyMemos, setMonthlyMemos] = useState<Record<string, string>>({});
+  const [memoCollapsed, setMemoCollapsed] = useState(false);
+  const memoSaveTimer = useRef<NodeJS.Timeout | null>(null);
+
   // Settings State
   const [themeColor, setThemeColor] = useState('#3b82f6');
   const [templates, setTemplates] = useState<{ id: string; name: string; content: string }[]>([]);
@@ -177,6 +199,22 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
           });
           setEvents(eventsMap);
         }
+
+        // 4. Load Monthly Memos
+        const { data: memoData } = await supabase
+          .from('monthly_memos')
+          .select('year_month, content')
+          .eq('calendar_id', targetId);
+
+        if (memoData) {
+          const memoMap: Record<string, string> = {};
+          memoData.forEach(m => {
+            memoMap[m.year_month] = m.content || '';
+          });
+          setMonthlyMemos(memoMap);
+        } else {
+          setMonthlyMemos({});
+        }
       } catch (err) {
         console.error("Failed to load data", err);
         setErrorMsg('データの読み込みに失敗しました。');
@@ -199,6 +237,15 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
     }
     return days;
   }, [currentMonth]);
+
+  // 日本の祝日（表示中の月をまたぐ年をすべてカバー）
+  const holidays = useMemo(() => {
+    const years = Array.from(new Set(calendarDays.map(d => d.year())));
+    return getHolidaysForYears(years);
+  }, [calendarDays]);
+
+  const currentYearMonth = currentMonth.format('YYYY-MM');
+  const currentMemo = monthlyMemos[currentYearMonth] || '';
 
   // Handlers
   const handlePrevMonth = () => setCurrentMonth(currentMonth.subtract(1, 'month'));
@@ -261,6 +308,132 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
       [selectedDate]: { ...currentEvent, bg_color: color },
     }));
     saveEventToDB(selectedDate, currentEvent.content, color);
+  };
+
+  // --- Multi-select (長押しで選択モード開始) ---
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const toggleDateSelection = (dateStr: string) => {
+    setSelectedDates(prev => {
+      const next = new Set(prev);
+      if (next.has(dateStr)) {
+        next.delete(dateStr);
+      } else {
+        next.add(dateStr);
+      }
+      if (next.size === 0) setSelectionMode(false);
+      return next;
+    });
+  };
+
+  const handleCellPointerDown = (e: React.PointerEvent, dateStr: string) => {
+    pointerStartRef.current = { x: e.clientX, y: e.clientY };
+    movedRef.current = false;
+    longPressFiredRef.current = false;
+    clearLongPressTimer();
+    if (isReadOnly) return; // 閲覧専用モードでは長押し選択を開始しない
+    longPressTimerRef.current = setTimeout(() => {
+      longPressFiredRef.current = true;
+      setSelectionMode(true);
+      setSelectedDates(prev => new Set(prev).add(dateStr));
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, LONG_PRESS_MS);
+  };
+
+  const handleCellPointerMove = (e: React.PointerEvent) => {
+    if (!pointerStartRef.current) return;
+    const dx = Math.abs(e.clientX - pointerStartRef.current.x);
+    const dy = Math.abs(e.clientY - pointerStartRef.current.y);
+    if (dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) {
+      movedRef.current = true;
+      clearLongPressTimer();
+    }
+  };
+
+  // タップ判定・選択トグル・日付詳細表示は全てpointerイベント内で完結させる
+  // (ブラウザのクリック合成イベントの挙動差に依存させないため)
+  const handleCellPointerUp = (dateStr: string) => {
+    clearLongPressTimer();
+    pointerStartRef.current = null;
+    const wasLongPress = longPressFiredRef.current;
+    const moved = movedRef.current;
+    longPressFiredRef.current = false;
+    movedRef.current = false;
+
+    if (wasLongPress || moved) return;
+
+    if (!isReadOnly && selectionMode) {
+      toggleDateSelection(dateStr);
+    } else {
+      handleDateSelect(dateStr);
+    }
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedDates(new Set());
+  };
+
+  const applyColorToSelection = async (color: string) => {
+    const dates = Array.from(selectedDates);
+    setEvents(prev => {
+      const next = { ...prev };
+      dates.forEach(d => {
+        next[d] = { content: next[d]?.content || '', bg_color: color };
+      });
+      return next;
+    });
+    await Promise.all(dates.map(d => saveEventToDB(d, events[d]?.content || '', color)));
+    exitSelectionMode();
+  };
+
+  // --- スワイプで月送り (モバイル・タッチのみ) ---
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handleGridPointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    swipeStartRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handleGridPointerUp = (e: React.PointerEvent) => {
+    if (e.pointerType !== 'touch' || !swipeStartRef.current) return;
+    const dx = e.clientX - swipeStartRef.current.x;
+    const dy = e.clientY - swipeStartRef.current.y;
+    swipeStartRef.current = null;
+
+    // 選択モード中はスワイプでの月送りを無効化（複数選択の操作を優先）
+    if (selectionMode) return;
+    if (Math.abs(dx) > SWIPE_THRESHOLD_PX && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (dx > 0) handlePrevMonth();
+      else handleNextMonth();
+    }
+  };
+
+  // --- 月間メモ ---
+  const handleMemoChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const ym = currentYearMonth;
+    setMonthlyMemos(prev => ({ ...prev, [ym]: value }));
+
+    if (memoSaveTimer.current) clearTimeout(memoSaveTimer.current);
+    memoSaveTimer.current = setTimeout(() => {
+      saveMemoToDB(ym, value);
+    }, 500);
+  };
+
+  const saveMemoToDB = async (yearMonth: string, content: string) => {
+    if (isReadOnly || !actualCalendarId) return;
+    await supabase.from('monthly_memos').upsert({
+      calendar_id: actualCalendarId,
+      year_month: yearMonth,
+      content,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'calendar_id,year_month' });
   };
 
   const handleTemplateInsert = (templateContent: string) => {
@@ -463,34 +636,56 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
         </div>
 
         {/* Calendar Grid */}
-        <div className="flex-1 overflow-y-auto">
+        <div
+          className="flex-1 overflow-y-auto"
+          onPointerDown={handleGridPointerDown}
+          onPointerUp={handleGridPointerUp}
+          onPointerCancel={handleGridPointerUp}
+        >
           <div className="grid grid-cols-7 auto-rows-max">
             {calendarDays.map((day, i) => {
               const dateStr = day.format('YYYY-MM-DD');
               const isSelected = selectedDate === dateStr;
               const isCurrentMonth = day.month() === currentMonth.month();
+              const isToday = dateStr === today;
+              const isMultiSelected = selectedDates.has(dateStr);
+              const holidayName = holidays[dateStr];
               const eventData = events[dateStr];
               const activeColor = colorOptions.find(c => c.value === eventData?.bg_color);
               const isTransparent = !eventData?.bg_color || eventData.bg_color === 'transparent';
               const cellTextColorClass = !isTransparent ? getContrastYIQ(eventData.bg_color) : '';
               const isDarkBg = cellTextColorClass === 'text-white';
-              
+              const isDateRed = !isDarkBg && (day.day() === 0 || !!holidayName);
+
               return (
                 <div
                   key={dateStr}
-                  onClick={() => handleDateSelect(dateStr)}
+                  onPointerDown={(e) => handleCellPointerDown(e, dateStr)}
+                  onPointerMove={handleCellPointerMove}
+                  onPointerUp={() => handleCellPointerUp(dateStr)}
+                  onPointerCancel={() => handleCellPointerUp(dateStr)}
                   className={cn(
-                    "min-h-[80px] p-1 border-b border-r border-gray-100 cursor-pointer transition-colors relative flex flex-col",
+                    "min-h-[80px] p-1 border-b border-r border-gray-100 cursor-pointer transition-colors relative flex flex-col select-none",
                     !isCurrentMonth && "opacity-40",
                     isSelected ? "ring-2 ring-inset ring-blue-500 z-10" : "hover:bg-gray-50",
+                    isMultiSelected && "ring-2 ring-inset ring-indigo-500 bg-indigo-50 z-10",
                     isDarkBg && "border-white/20"
                   )}
                   style={{ backgroundColor: !isTransparent ? eventData.bg_color : undefined }}
                 >
+                  {isToday && (
+                    <div className="absolute top-1 left-1 w-1.5 h-1.5 rounded-full bg-blue-500" />
+                  )}
+                  {isMultiSelected && (
+                    <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px] font-bold z-20">
+                      ✓
+                    </div>
+                  )}
                   <div className="flex justify-between items-start w-full">
                     <div className={cn(
-                      "text-xs font-semibold p-1", 
-                      isDarkBg ? "text-white" : (day.day() === 0 ? "text-red-500" : day.day() === 6 ? "text-blue-500" : "text-gray-700")
+                      "text-xs font-semibold p-1 rounded-full flex items-center justify-center",
+                      isToday && (isDarkBg ? "bg-white/25" : "bg-blue-500 text-white"),
+                      !isToday && (isDarkBg ? "text-white" : isDateRed ? "text-red-500" : day.day() === 6 ? "text-blue-500" : "text-gray-700")
                     )}>
                       {day.format('D')}
                     </div>
@@ -503,6 +698,14 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
                       </div>
                     )}
                   </div>
+                  {holidayName && (
+                    <div className={cn(
+                      "text-[9px] leading-tight truncate px-1",
+                      isDarkBg ? "text-white/90" : "text-red-500"
+                    )}>
+                      {holidayName}
+                    </div>
+                  )}
                   {eventData?.content && (
                     <div className={cn(
                       "text-[10px] sm:text-xs leading-tight whitespace-pre-wrap break-words px-1 pb-1 mt-1",
@@ -516,7 +719,67 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
             })}
           </div>
         </div>
+
+        {/* Monthly Memo (カレンダー下部) */}
+        <div className="border-t border-gray-200 bg-gray-50 shrink-0">
+          <button
+            onClick={() => setMemoCollapsed(!memoCollapsed)}
+            className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors"
+          >
+            <span>月間メモ（{currentMonth.format('YYYY年M月')}）</span>
+            {memoCollapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          {!memoCollapsed && (
+            <div className="px-4 pb-3">
+              {isReadOnly ? (
+                currentMemo ? (
+                  <div className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-white border border-gray-200 rounded-lg p-2 max-h-24 overflow-y-auto">
+                    {currentMemo}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400">メモはありません</div>
+                )
+              ) : (
+                <textarea
+                  value={currentMemo}
+                  onChange={handleMemoChange}
+                  placeholder="この月のメモを入力... (自動保存)"
+                  className="w-full text-xs sm:text-sm p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none h-16 sm:h-20 bg-white"
+                />
+              )}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* ===== 複数選択ツールバー ===== */}
+      {selectionMode && (
+        <div className="fixed bottom-14 left-0 right-0 z-30 bg-white border-t border-gray-200 shadow-[0_-4px_15px_rgba(0,0,0,0.1)] px-4 py-3 flex items-center gap-3 flex-wrap md:left-auto md:right-4 md:bottom-4 md:rounded-xl md:border md:max-w-md">
+          <span className="text-xs sm:text-sm font-medium text-gray-700 shrink-0">{selectedDates.size}件選択中</span>
+          <div className="flex items-center gap-2 flex-wrap flex-1">
+            {colorOptions.map(c => (
+              <button
+                key={c.id}
+                onClick={() => applyColorToSelection(c.value)}
+                className="w-7 h-7 rounded-full border-2 border-gray-200 hover:scale-110 transition-transform shrink-0"
+                style={{ backgroundColor: c.value === 'transparent' ? '#fff' : c.value }}
+                title={c.label}
+              >
+                {c.value === 'transparent' && (
+                  <div className="w-full h-full rounded-full border-2 border-dashed border-gray-300" />
+                )}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={exitSelectionMode}
+            className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 shrink-0"
+            title="選択解除"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       {/* ===== Right: Detail Panel ===== */}
       <div className={cn(
@@ -536,11 +799,21 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
               <span className="hidden sm:inline">前日</span>
             </button>
           </div>
-          <div className="text-base sm:text-lg font-bold flex items-center justify-center">
-            {dayjs(selectedDate).format('YYYY/MM/DD')}
-            <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-normal text-gray-500">
-              ({['日', '月', '火', '水', '木', '金', '土'][dayjs(selectedDate).day()]})
+          <div className="text-base sm:text-lg font-bold flex items-center justify-center flex-wrap gap-x-2 text-center">
+            <span className="flex items-center">
+              {dayjs(selectedDate).format('YYYY/MM/DD')}
+              <span className={cn(
+                "ml-1 sm:ml-2 text-xs sm:text-sm font-normal",
+                dayjs(selectedDate).day() === 0 || getHolidayName(selectedDate) ? "text-red-500" : dayjs(selectedDate).day() === 6 ? "text-blue-500" : "text-gray-500"
+              )}>
+                ({['日', '月', '火', '水', '木', '金', '土'][dayjs(selectedDate).day()]})
+              </span>
             </span>
+            {getHolidayName(selectedDate) && (
+              <span className="text-[10px] sm:text-xs font-medium text-red-500 bg-red-50 px-2 py-0.5 rounded-full">
+                {getHolidayName(selectedDate)}
+              </span>
+            )}
           </div>
           <button onClick={handleNextDay} className="flex items-center px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-600 hover:bg-gray-200 rounded-md transition-colors">
             <span className="sm:hidden">翌日 &gt;</span>
