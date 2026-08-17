@@ -395,6 +395,11 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
   };
 
   // --- スワイプで月送り (モバイル・タッチのみ) ---
+  // 実機では、横スワイプの途中でブラウザ側が「縦スクロール」と誤認識し、
+  // pointercancelを発行してJS側の追跡を打ち切ってしまうことがある。
+  // これを防ぐため、グリッド要素には touch-action: pan-y を指定し、
+  // 縦方向のパン操作のみブラウザのネイティブ処理に委ね、横方向の判定は
+  // 常にJS側（このハンドラ）に渡るようにする。
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const handleGridPointerDown = (e: React.PointerEvent) => {
@@ -414,6 +419,11 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
       if (dx > 0) handlePrevMonth();
       else handleNextMonth();
     }
+  };
+
+  // pointercancel時は座標が信頼できないため、月送り判定はせず追跡を破棄するのみ
+  const handleGridPointerCancel = () => {
+    swipeStartRef.current = null;
   };
 
   // --- 月間メモ ---
@@ -646,10 +656,11 @@ export default function CalendarApp({ loggedInCalendarId, calendarId, viewToken,
 
         {/* Calendar Grid */}
         <div
-          className="flex-1 overflow-y-auto"
+          className="flex-1 overflow-y-auto touch-pan-y"
+          style={{ touchAction: 'pan-y' }}
           onPointerDown={handleGridPointerDown}
           onPointerUp={handleGridPointerUp}
-          onPointerCancel={handleGridPointerUp}
+          onPointerCancel={handleGridPointerCancel}
         >
           <div className="grid grid-cols-7 auto-rows-max">
             {calendarDays.map((day, i) => {
