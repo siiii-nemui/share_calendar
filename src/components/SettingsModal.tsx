@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Save, Loader2 } from 'lucide-react';
+import { X, Plus, Trash2, Save, Loader2, ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import bcrypt from 'bcryptjs';
@@ -45,6 +45,11 @@ export default function SettingsModal({
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+
+  // Drag & drop / touch reordering for color list
+  const [draggingColorId, setDraggingColorId] = useState<string | null>(null);
+  const localColorOptionsRef = React.useRef(localColorOptions);
+  localColorOptionsRef.current = localColorOptions;
 
   // Sync props to local state when modal opens
   useEffect(() => {
@@ -179,6 +184,42 @@ export default function SettingsModal({
     } finally {
       setSaving(false);
     }
+  };
+
+  const moveColorOption = (index: number, direction: -1 | 1) => {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= localColorOptions.length) return;
+    const newC = [...localColorOptions];
+    [newC[index], newC[targetIndex]] = [newC[targetIndex], newC[index]];
+    setLocalColorOptions(newC);
+  };
+
+  const handleColorDragStart = (e: React.PointerEvent<HTMLButtonElement>, id: string) => {
+    e.preventDefault();
+    setDraggingColorId(id);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleColorDragMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!draggingColorId) return;
+    const target = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const rowEl = target?.closest('[data-color-id]') as HTMLElement | null;
+    const overId = rowEl?.getAttribute('data-color-id');
+    if (!overId || overId === draggingColorId) return;
+
+    const current = localColorOptionsRef.current;
+    const fromIndex = current.findIndex(c => c.id === draggingColorId);
+    const toIndex = current.findIndex(c => c.id === overId);
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+
+    const newC = [...current];
+    const [moved] = newC.splice(fromIndex, 1);
+    newC.splice(toIndex, 0, moved);
+    setLocalColorOptions(newC);
+  };
+
+  const handleColorDragEnd = () => {
+    setDraggingColorId(null);
   };
 
   const handleDeleteAccount = async () => {
@@ -388,7 +429,26 @@ export default function SettingsModal({
 
                 <div className="space-y-3">
                   {localColorOptions.map((c, i) => (
-                    <div key={c.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg bg-gray-50">
+                    <div
+                      key={c.id}
+                      data-color-id={c.id}
+                      className={cn(
+                        "flex items-center gap-3 p-3 border border-gray-200 rounded-lg bg-gray-50 transition-shadow",
+                        draggingColorId === c.id && "opacity-50 ring-2 ring-blue-400"
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onPointerDown={(e) => handleColorDragStart(e, c.id)}
+                        onPointerMove={handleColorDragMove}
+                        onPointerUp={handleColorDragEnd}
+                        onPointerCancel={handleColorDragEnd}
+                        className="touch-none cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 shrink-0 p-1 -m-1"
+                        title="ドラッグして並び替え"
+                      >
+                        <GripVertical size={18} />
+                      </button>
+
                       {c.value === 'transparent' ? (
                         <div className="w-10 h-10 rounded-full border-2 border-dashed border-gray-300 bg-white shrink-0" />
                       ) : (
@@ -422,8 +482,27 @@ export default function SettingsModal({
                         />
                       </div>
                       
+                      <div className="flex flex-col shrink-0">
+                        <button
+                          onClick={() => moveColorOption(i, -1)}
+                          disabled={i === 0}
+                          className="text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                          title="上へ移動"
+                        >
+                          <ChevronUp size={16} />
+                        </button>
+                        <button
+                          onClick={() => moveColorOption(i, 1)}
+                          disabled={i === localColorOptions.length - 1}
+                          className="text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                          title="下へ移動"
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                      </div>
+
                       {c.value !== 'transparent' && (
-                        <button 
+                        <button
                           onClick={() => setLocalColorOptions(localColorOptions.filter(opt => opt.id !== c.id))}
                           className="text-red-500 hover:bg-red-50 p-2 rounded"
                         >
